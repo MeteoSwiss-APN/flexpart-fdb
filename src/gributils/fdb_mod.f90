@@ -28,7 +28,11 @@ MODULE fdb_mod
 
 CONTAINS
     
-    SUBROUTINE fdb_create_request_dr(forecastDateTime, step, dr, req, caller)
+
+
+    SUBROUTINE fdb_create_request_dr(forecastDateTime, step, dr, req, &
+        &                            discipline, parameterCategory ,parameterNumber, &
+        &                            levelRange, levelType, caller)
         character(len=*), OPTIONAL, INTENT(IN) :: caller
         TYPE(c_ptr), INTENT(OUT) :: dr !fdb datareader
         type(c_ptr), INTENT(OUT) :: req !fdb request
@@ -38,11 +42,18 @@ CONTAINS
         INTEGER(kind=c_int) :: res !fdb response
 
         character(len=3) :: productionStatusOfProcessedData(2)
-        character(len=6) :: typeOfLevel(3)
-        character(len=6) :: level(140)
-        character(len=6) :: parameterNumber(15)
-        character(len=3) :: parameterCategory(8)
-        character(len=3) :: discipline(3)
+        character(len=6), dimension(:), allocatable :: level
+
+        integer :: discipline(:)
+        integer :: parameterCategory(:)
+        integer :: parameterNumber(:)
+        character(len=6) :: levelType(:)
+        integer :: levelRange(2)
+        character(len=6) :: parameterNumber_s(SIZE(parameterNumber))
+        character(len=3) :: parameterCategory_s(SIZE(parameterCategory))
+        character(len=3) :: discipline_s(SIZE(discipline))
+
+        integer :: i
 
         if (caller == 'readwind') call start_timer(timer_fdb_setup_request)
         res = fdb_new_request(req)
@@ -59,47 +70,38 @@ CONTAINS
 
         call fdb_request_add_values(req, "productDefinitionTemplateNumber", ["0","8"])
 
-        parameterNumber(1)='0'
-        parameterNumber(2)='1'
-        parameterNumber(3)='2'
-        parameterNumber(4)='3'
-        parameterNumber(5)='4'
-        parameterNumber(6)='6'
-        parameterNumber(7)='9'
-        parameterNumber(8)='10'
-        parameterNumber(9)='11'
-        parameterNumber(10)='32'
-        parameterNumber(11)='37'
-        parameterNumber(12)='38'
-        parameterNumber(13)='142'
-        parameterNumber(14)='160'
-        parameterNumber(15)='254'
-        call fdb_request_add_values(req, "parameterNumber", parameterNumber)
+        do i=1,SIZE(parameterNumber)
+            write(parameterNumber_s(i), '(I6.1)')  parameterNumber(i)
+            write(*,*)  "parameterNumber_s:", parameterNumber_s(i)
+        end do
+
+        call fdb_request_add_values(req, "parameterNumber", parameterNumber_s)
 
         call fdb_request_add_values(req, "generatingProcessIdentifier", ["154"])
-        
-        discipline(1)='0'
-        discipline(2)='2'
-        discipline(3)='192'
-        call fdb_request_add_values(req, "discipline", discipline)
 
-        parameterCategory(1)='0'
-        parameterCategory(2)='1'
-        parameterCategory(3)='2'
-        parameterCategory(4)='3'
-        parameterCategory(5)='4'
-        parameterCategory(6)='5'
-        parameterCategory(7)='6'
-        parameterCategory(8)='128'
-        call fdb_request_add_values(req, "parameterCategory", parameterCategory)
+        do i=1,SIZE(discipline)
+            write(discipline_s(i), '(I3.1)')  discipline(i)
+            write(*,*)  "discipline_s:", discipline_s(i)
+        end do
 
-        typeOfLevel(1)="sfc" !surface, heightAboveGround
-        typeOfLevel(2)="ml" !hybrid
-        typeOfLevel(3)="10" !entireAtmosphereLayer
-        call fdb_request_add_values(req, "typeOfFirstFixedSurface", typeOfLevel)
+        call fdb_request_add_values(req, "discipline", discipline_s)
 
-        call expand_values_for_request(level,0,140)
+        do i=1,SIZE(parameterCategory)
+            write(parameterCategory_s(i), '(I3.1)')  parameterCategory(i)
+            write(*,*)  "parameterCategory_s:", parameterCategory_s(i)
+        end do
+
+        call fdb_request_add_values(req, "parameterCategory", parameterCategory_s)
+
+        write(*,*) 'levelType: ', levelType
+        call fdb_request_add_values(req, "typeOfFirstFixedSurface", levelType)
+
+        allocate(level(levelRange(2)-levelRange(1)+1))
+        call expand_values_for_request(level,levelRange(1),levelRange(2))
+        write(*,*) 'level: ', level
+
         call fdb_request_add_values(req, "level", level)
+        deallocate(level)
 
         if (caller == 'readwind') call stop_timer(timer_fdb_setup_request)
 
@@ -147,8 +149,13 @@ CONTAINS
         character(kind=c_char, len=1), dimension(:), allocatable  :: buf
         type(c_ptr) :: req !fdb request
         character(len=24) :: gribErrorMsg = 'Error getting grib center'
+        character(len=6) :: surfaces(3)
+        surfaces(1)='sfc'
+        surfaces(2)='ml'
+        surfaces(3)='10'
 
-        call fdb_create_request_dr(wfdatetime(wftime_indj), wfstep(wftime_indj), dr, req)
+        call fdb_create_request_dr(wfdatetime(wftime_indj), wfstep(wftime_indj), dr, req, &
+        &                          [0],[6],[1], [0,140], surfaces(:))
         res = fdb_datareader_open(dr, total_size)
 
         allocate(buf(total_size))

@@ -70,7 +70,7 @@ subroutine readwind_ecmwf(indj,n,uuh,vvh,wwh)
   real(sp) :: uuh(0:nxmax-1,0:nymax-1,nuvzmax)
   real(sp) :: vvh(0:nxmax-1,0:nymax-1,nuvzmax)
   real(sp) :: wwh(0:nxmax-1,0:nymax-1,nwzmax)
-  integer :: indj,i,j,k,n,levdiff2,ifield,iumax,iwmax,lev
+  integer :: indj,i,j,k,n,l,levdiff2,ifield,iumax,iwmax,lev
 
 ! VARIABLES AND ARRAYS NEEDED FOR GRIB DECODING
 
@@ -101,7 +101,7 @@ subroutine readwind_ecmwf(indj,n,uuh,vvh,wwh)
   integer(kind=c_int) :: res !fdb response
   type(c_ptr) :: dr !fdb datareader
   type(c_ptr) :: req !fdb request
-  type(c_ptr) :: it, it2 !fdb request
+  type(c_ptr) :: it !fdb request
   integer(kind=c_int)  :: max_len ! Max length of GRIB message returned by fdb
   character(kind=c_char, len=1), dimension(:), allocatable  :: buf
 
@@ -109,8 +109,23 @@ subroutine readwind_ecmwf(indj,n,uuh,vvh,wwh)
   character(len=128)                        :: keyvalue_str
   integer                                   :: numberOfValues
   real, dimension(:), target, allocatable   :: values
+  logical                                   :: fdbdebug = .TRUE.
+  character(len=6) :: surfaces(3)
 
+  type :: t_request
+    integer :: discipline(1)
+    integer :: parameterCategory(1)
+    integer,pointer :: parameterNumber(:)
+    integer :: levelRange(2)
+    character(len=6),pointer  :: levelType(:)
+  end type
 
+  integer, parameter :: num_requests = 11
+  type(t_request) :: requests(num_requests)
+
+  surfaces(1)='sfc'
+  surfaces(2)='ml'
+  surfaces(3)='10'
 
   hflswitch=.false.
   strswitch=.false.
@@ -126,329 +141,439 @@ subroutine readwind_ecmwf(indj,n,uuh,vvh,wwh)
 
   if (fdbflag .eq. 1) then
 
-    call start_timer(timer_readwind_request)
+    ! tcc total cloud cover
+    requests(1)%discipline(:) = 0
+    requests(1)%parameterCategory(:) = 6
+    allocate(requests(1)%parameterNumber(1))
+    requests(1)%parameterNumber(:) = 1
+    requests(1)%levelRange(:) = [0,140]
+    allocate(requests(1)%levelType(3))
+    requests(1)%levelType(:) = surfaces(:)
 
+    ! nswrf
+    requests(2)%discipline(:) = 0
+    requests(2)%parameterCategory(:) = 4
+    allocate(requests(2)%parameterNumber(1))
+    requests(2)%parameterNumber(:) = 9
+    requests(2)%levelRange(:) = [0,140]
+    allocate(requests(2)%levelType(3))
+    requests(2)%levelType(:) = surfaces(:)
 
-    call start_timer(timer_fdb_create_request_dr)
-    call fdb_create_request_dr(wfdatetime(indj), wfstep(indj), dr, req, 'readwind')
-    call stop_timer(timer_fdb_create_request_dr)
+    ! lsm
+    requests(3)%discipline(:) = 2
+    requests(3)%parameterCategory(:) = 0
+    allocate(requests(3)%parameterNumber(1))
+    requests(3)%parameterNumber(:) = 0
+    requests(3)%levelRange(:) = [0,10]
+    allocate(requests(3)%levelType(1))
+    requests(3)%levelType(:) = 'sfc'
 
-    call start_timer(timer_fdb_datareader_open)
-    res = fdb_datareader_open(dr, total_size)
-    call stop_timer(timer_fdb_datareader_open)
+    ! z
+    requests(4)%discipline(:) = 0
+    requests(4)%parameterCategory(:) = 3
+    allocate(requests(4)%parameterNumber(2))
+    requests(4)%parameterNumber(:) = [4]
+    requests(4)%levelRange(:) = [0,10]
+    allocate(requests(4)%levelType(3))
+    requests(4)%levelType(:) = surfaces(:)
 
-    call start_timer(timer_fdb_get_max_message_len)
-    call fdb_get_max_message_len(req, it, max_len)
-    call stop_timer(timer_fdb_get_max_message_len)
+    ! sp
+    requests(5)%discipline(:) = 0
+    requests(5)%parameterCategory(:) = 3
+    allocate(requests(5)%parameterNumber(2))
+    requests(5)%parameterNumber(:) = [0]
+    requests(5)%levelRange(:) = [0,140]
+    allocate(requests(5)%levelType(3))
+    requests(5)%levelType(:) = surfaces(:)
 
-    call start_timer(timer_allocate_buf)
-    allocate(buf(max_len))
-    call stop_timer(timer_allocate_buf)
+    ! sdor
+    requests(6)%discipline(:) = 192
+    requests(6)%parameterCategory(:) = 128
+    allocate(requests(6)%parameterNumber(2))
+    requests(6)%parameterNumber(:) = [160]
+    requests(6)%levelRange(:) = [0,0]
+    allocate(requests(6)%levelType(3))
+    requests(6)%levelType(:) = surfaces(:)
 
-    call start_timer(timer_fdb_datareader_tell)
-    res = fdb_datareader_tell(dr, read);
-    call stop_timer(timer_fdb_datareader_tell)
+    ! lsp
+    requests(7)%discipline(:) = 192
+    requests(7)%parameterCategory(:) = 128
+    allocate(requests(7)%parameterNumber(2))
+    requests(7)%parameterNumber(:) = [142]
+    requests(7)%levelRange(:) = [0,140]
+    allocate(requests(7)%levelType(3))
+    requests(7)%levelType(:) = surfaces(:)
 
-    call stop_timer(timer_readwind_request)
+    ! q, acpcp, sd (snow depth)
+    requests(8)%discipline(:) = 0
+    requests(8)%parameterCategory(:) = 1
+    allocate(requests(8)%parameterNumber(3))
+    requests(8)%parameterNumber(:) = [0,10,254]
+    requests(8)%levelRange(:) = [0,140]
+    allocate(requests(8)%levelType(3))
+    requests(8)%levelType(:) = surfaces(:)
 
-    call start_timer(timer_fdb_inspect)
-    res = fdb_inspect(fdb_handle, req, it2)
-    call stop_timer(timer_fdb_inspect)
+    ! t, 2t, 2d, shtfl
+    requests(9)%discipline(:) = 0
+    requests(9)%parameterCategory(:) = 0
+    allocate(requests(9)%parameterNumber(3))
+    requests(9)%parameterNumber(:) = [0,6,11]
+    requests(9)%levelRange(:) = [0,140]
+    allocate(requests(9)%levelType(3))
+    requests(9)%levelType(:) = surfaces(:)
+
+    ! v, 10v, etadot
+    requests(10)%discipline(:) = 0
+    requests(10)%parameterCategory(:) = 2
+    allocate(requests(10)%parameterNumber(2))
+    requests(10)%parameterNumber(:) = [3,32]
+    requests(10)%levelRange(:) = [40,137]
+    allocate(requests(10)%levelType(3))
+    requests(10)%levelType(:) = surfaces(:)
+
+    ! u, 10u, nsss, ewss
+    requests(11)%discipline(:) = 0
+    requests(11)%parameterCategory(:) = 2
+    allocate(requests(11)%parameterNumber(3))
+    requests(11)%parameterNumber(:) = [2,37,38]
+    requests(11)%levelRange(:) = [0,140]
+    allocate(requests(11)%levelType(3))
+    requests(11)%levelType(:) = surfaces(:)
 
     gotGrid=0
     ifield=0
 
-    do while(read .LT. total_size)
-      call start_timer(timer_readwind_iter)
+    do l=1,num_requests
+      call start_timer(timer_readwind_request)
+      write(*,*) '-------------------'
+      call start_timer(timer_fdb_create_request_dr)
+      call fdb_create_request_dr(wfdatetime(indj), wfstep(indj), dr, req, &
+      &      requests(l)%discipline(:), &
+      &      requests(l)%parameterCategory(:), &
+      &      requests(l)%parameterNumber(:), &
+      &      requests(l)%levelRange(:), &
+      &      requests(l)%levelType(:), 'readwind')
+      call stop_timer(timer_fdb_create_request_dr)
 
-      call start_timer(timer_readwind_fdb_inloop)
+      call start_timer(timer_fdb_datareader_open)
+      res = fdb_datareader_open(dr, total_size)
+      call stop_timer(timer_fdb_datareader_open)
 
-      message_count=message_count+1
+      if (l .eq. 1) then
+        call start_timer(timer_fdb_get_max_message_len)
+        call fdb_get_max_message_len(req, it, max_len)
+        call stop_timer(timer_fdb_get_max_message_len)
+      end if
 
-      ! FIND LENGTH OF MESSAGE
-      marker = 2000
-      res = fdb_datareader_read(dr, buf, marker, read)
-      call codes_new_from_message(igrib, buf, status)
-      call grib_get(igrib,'totalLength', messageLength, iret)
-      call grib_check(iret,gribFunction,gribErrorMsg)
-      call grib_release(igrib)
-      ! GO BACK TO START OF MESSAGE
-      res = fdb_datareader_skip(dr, -marker)
+      call start_timer(timer_allocate_buf)
+      allocate(buf(max_len*2))
+      call stop_timer(timer_allocate_buf)
 
-      call stop_timer(timer_readwind_fdb_inloop)
+      if (fdbdebug .eqv. .TRUE.) write(*,*) "(total_size, max_len) ", total_size, max_len
 
-      call start_timer(timer_fdb_datareader_read)
-      ! READ WHOLE MESSAGE
-      res = fdb_datareader_read(dr, buf, messageLength, read)
-      call stop_timer(timer_fdb_datareader_read)
-
-      call codes_new_from_message(igrib, buf, status)
-
-      call start_timer(timer_readwind_common)
-
-      ! First see if we read GRIB1 or GRIB2
-      call grib_get(igrib,'editionNumber',gribVer,iret)
-      call grib_check(iret,gribFunction,gribErrorMsg)
-
-      if (gribVer.eq.1) then ! GRIB Edition 1
-      
-        !print*,'GRiB Edition 1'
-        !read the grib2 identifiers
-        call grib_get_int(igrib,'indicatorOfParameter',isec1(6),iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-        call grib_get_int(igrib,'level',isec1(8),iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-    
-        !change code for etadot to code for omega
-        if (isec1(6).eq.77) then
-          isec1(6)=135
-        endif
-    
-        conversion_factor=1.
-    
-      else
-      
-        !print*,'GRiB Edition 2'
-        !read the grib2 identifiers
-        call grib_get_int(igrib,'discipline',discipl,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        call grib_get_int(igrib,'parameterCategory',parCat,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        call grib_get_int(igrib,'parameterNumber',parNum,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        call grib_get_int(igrib,'typeOfFirstFixedSurface',typSurf,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        call grib_get_int(igrib,'level',valSurf,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        call grib_get_int(igrib,'paramId',parId,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-
-        ! print*,discipl,parCat,parNum,typSurf,valSurf
-        
-        !convert to grib1 identifiers
-        isec1(6)=-1
-        isec1(7)=-1
-        isec1(8)=-1
-        isec1(8)=valSurf     ! level
-        conversion_factor=1.
-        if ((parCat.eq.0).and.(parNum.eq.0).and.(typSurf.eq.105)) then ! T
-          isec1(6)=130         ! indicatorOfParameter
-        elseif ((parCat.eq.2).and.(parNum.eq.2).and.(typSurf.eq.105)) then ! U
-          isec1(6)=131         ! indicatorOfParameter
-        elseif ((parCat.eq.2).and.(parNum.eq.3).and.(typSurf.eq.105)) then ! V
-          isec1(6)=132         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.0).and.(typSurf.eq.105)) then ! Q
-          isec1(6)=133         ! indicatorOfParameter
-    ! ESO Cloud water is in a) fields CLWC and CIWC, *or* b) field QC 
-        elseif ((parCat.eq.1).and.(parNum.eq.83).and.(typSurf.eq.105)) then ! clwc
-          isec1(6)=246         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.84).and.(typSurf.eq.105)) then ! ciwc
-          isec1(6)=247         ! indicatorOfParameter
-    ! ESO qc(=clwc+ciwc):
-        elseif ((parCat.eq.201).and.(parNum.eq.31).and.(typSurf.eq.105)) then ! qc
-          isec1(6)=201031         ! indicatorOfParameter
-        elseif ((parCat.eq.3).and.(parNum.eq.0).and.(typSurf.eq.1)) then !SP
-          isec1(6)=134         ! indicatorOfParameter
-        elseif ((parCat.eq.2).and.(parNum.eq.32)) then ! W, actually eta dot
-          isec1(6)=135         ! indicatorOfParameter
-        elseif ((parCat.eq.128).and.(parNum.eq.77)) then ! W, actually eta dot
-          isec1(6)=135         ! indicatorOfParameter
-        elseif ((parCat.eq.3).and.(parNum.eq.0).and.(typSurf.eq.101)) then !SLP
-          isec1(6)=151         ! indicatorOfParameter
-        elseif ((parCat.eq.2).and.(parNum.eq.2).and.(typSurf.eq.103)) then ! 10U
-          isec1(6)=165         ! indicatorOfParameter
-        elseif ((parCat.eq.2).and.(parNum.eq.3).and.(typSurf.eq.103)) then ! 10V
-          isec1(6)=166         ! indicatorOfParameter
-        elseif ((parCat.eq.0).and.(parNum.eq.0).and.(typSurf.eq.103)) then ! 2T
-          isec1(6)=167         ! indicatorOfParameter
-        elseif ((parCat.eq.0).and.(parNum.eq.6).and.(typSurf.eq.103)) then ! 2D
-          isec1(6)=168         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.11).and.(typSurf.eq.1)) then ! SD in older disp-files erroneously coded as SDE
-          isec1(6)=141         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.254).and.(typSurf.eq.1)) then ! SD
-          isec1(6)=141         ! indicatorOfParameter
-        elseif ((parCat.eq.6).and.(parNum.eq.1) .or. parId .eq. 164) then ! CC
-          isec1(6)=164         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.9) .or. parId .eq. 142) then ! LSP de-accumulated and converted to in [mm/h]
-          isec1(6)=142         ! indicatorOfParameter
-        elseif ((parCat.eq.1).and.(parNum.eq.10)) then ! CP de-accumulated and converted to in [mm/h]
-          isec1(6)=143         ! indicatorOfParameter
-        elseif ((parCat.eq.0).and.(parNum.eq.11).and.(typSurf.eq.1)) then ! SHF
-          isec1(6)=146         ! indicatorOfParameter
-          write(*,*) 'isec1(6)=146  '
-        elseif ((parCat.eq.4).and.(parNum.eq.9).and.(typSurf.eq.1)) then ! SR
-          isec1(6)=176         ! indicatorOfParameter
-    !    elseif ((parCat.eq.2).and.(parNum.eq.17) .or. parId .eq. 180) then ! EWSS --wrong
-        elseif ((parCat.eq.2).and.(parNum.eq.38) .or. parId .eq. 180) then ! EWSS --correct
-          isec1(6)=180         ! indicatorOfParameter
-    !    elseif ((parCat.eq.2).and.(parNum.eq.18) .or. parId .eq. 181) then ! NSSS --wrong
-        elseif ((parCat.eq.2).and.(parNum.eq.37) .or. parId .eq. 181) then ! NSSS --correct
-          isec1(6)=181         ! indicatorOfParameter
-        elseif ((parCat.eq.3).and.(parNum.eq.4)) then ! ORO
-          isec1(6)=129         ! indicatorOfParameter
-        elseif ((parCat.eq.3).and.(parNum.eq.7) .or. parId .eq. 160) then ! SDO
-          isec1(6)=160         ! indicatorOfParameter
-        elseif ((discipl.eq.2).and.(parCat.eq.0).and.(parNum.eq.0).and. &
-            (typSurf.eq.1)) then ! LSM
-          isec1(6)=172         ! indicatorOfParameter
-        elseif (parNum.eq.152) then 
-          isec1(6)=152         ! avoid warning for lnsp    
-        else
-          print*,'***WARNING: undefined GRiB2 message found!',discipl, &
-              parCat,parNum,typSurf
-        endif
-        ! write(*,*) 'isec1(6)= ',isec1(6)
-        if(parId .ne. isec1(6) .and. parId .ne. 77) then
-          write(*,*) 'readwind_ecmwf: parId',parId, 'isec1(6)',isec1(6)
-    !    stop
-        endif
-    
-      endif
-
-    !HSO  get the size and data of the values array
-      if (isec1(6).ne.-1) then
-        call grib_get_real4_array(igrib,'values',zsec4,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-      endif
-      
-    !HSO  get the required fields from section 2 in a gribex compatible manner
-      if (ifield.eq.1) then
-        call grib_get_int(igrib,'numberOfPointsAlongAParallel',isec2(2),iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-        call grib_get_int(igrib,'numberOfPointsAlongAMeridian',isec2(3),iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-        call grib_get_int(igrib,'numberOfVerticalCoordinateValues',isec2(12))
-        call grib_check(iret,gribFunction,gribErrorMsg)
-    ! CHECK GRID SPECIFICATIONS
-        if(isec2(2).ne.nxfield) stop 'READWIND: NX NOT CONSISTENT'
-        if(isec2(3).ne.ny) stop 'READWIND: NY NOT CONSISTENT'
-        if(isec2(12)/2-1.ne.nlev_ec) &
-            stop 'READWIND: VERTICAL DISCRETIZATION NOT CONSISTENT'
-      endif ! ifield
-    
-    !HSO  get the second part of the grid dimensions only from GRiB1 messages
-      if (isec1(6) .eq. 167 .and. (gotGrid.eq.0)) then
-        call grib_get_real8(igrib,'longitudeOfFirstGridPointInDegrees', &
-            xauxin,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-        call grib_get_real8(igrib,'latitudeOfLastGridPointInDegrees', &
-            yauxin,iret)
-        call grib_check(iret,gribFunction,gribErrorMsg)
-        if (xauxin.gt.180.) xauxin=xauxin-360.0
-        if (xauxin.lt.-180.) xauxin=xauxin+360.0
-    
-        xaux=xauxin+real(nxshift)*dx
-        yaux=yauxin
-        if (xaux.gt.180.) xaux=xaux-360.0
-        if(abs(xaux-xlon0).gt.eps) &
-            stop 'READWIND: LOWER LEFT LONGITUDE NOT CONSISTENT'
-        if(abs(yaux-ylat0).gt.eps) &
-            stop 'READWIND: LOWER LEFT LATITUDE NOT CONSISTENT'
-        gotGrid=1
-      endif ! gotGrid
-    
-      do j=0,nymin1
-        do i=0,nxfield-1
-          k=isec1(8)
-          if(isec1(6).eq.130) tth(i,j,nlev_ec-k+2,n)= &!! TEMPERATURE
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.131) uuh(i,j,nlev_ec-k+2)= &!! U VELOCITY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.132) vvh(i,j,nlev_ec-k+2)= &!! V VELOCITY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.133) then                      !! SPEC. HUMIDITY
-            qvh(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            if (qvh(i,j,nlev_ec-k+2,n) .lt. 0.) &
-                qvh(i,j,nlev_ec-k+2,n) = 0.
-    !        this is necessary because the gridded data may contain
-    !        spurious negative values
-          endif
-          if(isec1(6).eq.134) ps(i,j,1,n)= &!! SURF. PRESS.
-              zsec4(nxfield*(ny-j-1)+i+1)
-    
-          if(isec1(6).eq.135) wwh(i,j,nlev_ec-k+1)= &!! W VELOCITY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.141) sd(i,j,1,n)= &!! SNOW DEPTH
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.151) msl(i,j,1,n)= &!! SEA LEVEL PRESS.
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.164) tcc(i,j,1,n)= &!! CLOUD COVER
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.165) u10(i,j,1,n)= &!! 10 M U VELOCITY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.166) v10(i,j,1,n)= &!! 10 M V VELOCITY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.167) tt2(i,j,1,n)= &!! 2 M TEMPERATURE
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.168) td2(i,j,1,n)= &!! 2 M DEW POINT
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.142) then                      !! LARGE SCALE PREC.
-            lsprec(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            if (lsprec(i,j,1,n).lt.0.) lsprec(i,j,1,n)=0.
-          endif
-          if(isec1(6).eq.143) then                      !! CONVECTIVE PREC.
-            convprec(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            if (convprec(i,j,1,n).lt.0.) convprec(i,j,1,n)=0.
-          endif
-          if(isec1(6).eq.146) sshf(i,j,1,n)= &!! SENS. HEAT FLUX
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if((isec1(6).eq.146).and.(zsec4(nxfield*(ny-j-1)+i+1).ne.0.)) &
-              hflswitch=.true.    ! Heat flux available
-          if(isec1(6).eq.176) then                      !! SOLAR RADIATION
-            ssr(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            if (ssr(i,j,1,n).lt.0.) ssr(i,j,1,n)=0.
-          endif
-          if(isec1(6).eq.180) ewss(i,j)= &!! EW SURFACE STRESS
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.181) nsss(i,j)= &!! NS SURFACE STRESS
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(((isec1(6).eq.180).or.(isec1(6).eq.181)).and. &
-              (zsec4(nxfield*(ny-j-1)+i+1).ne.0.)) strswitch=.true.    ! stress available
-    !sec        strswitch=.true.
-          if(isec1(6).eq.129) oro(i,j)= &!! ECMWF OROGRAPHY
-              zsec4(nxfield*(ny-j-1)+i+1)/ga
-          if(isec1(6).eq.160) excessoro(i,j)= &!! STANDARD DEVIATION OF OROGRAPHY
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.172) lsm(i,j)= &!! ECMWF LAND SEA MASK
-              zsec4(nxfield*(ny-j-1)+i+1)
-          if(isec1(6).eq.131) iumax=max(iumax,nlev_ec-k+1)
-          if(isec1(6).eq.135) iwmax=max(iwmax,nlev_ec-k+1)
-    !ZHG READING CLOUD FIELDS ASWELL
-    ! ESO TODO: add check for if one of clwc/ciwc missing (error),
-    ! also if all 3 cw fields present, use qc and disregard the others
-          if(isec1(6).eq.246) then  !! CLWC  Cloud liquid water content [kg/kg]
-            clwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            readclouds=.true.
-            sumclouds=.false.
-          endif
-          if(isec1(6).eq.247) then  !! CIWC  Cloud ice water content
-            ciwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
-          endif
-    !ZHG end
-    !ESO read qc (=clwc+ciwc)
-          if(isec1(6).eq.201031) then  !! QC  Cloud liquid water content [kg/kg]
-            clwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
-            readclouds=.true.
-            sumclouds=.true.
-          endif
-    
-        end do
-      end do
-
-      call grib_release(igrib)
+      call start_timer(timer_fdb_datareader_tell)
       res = fdb_datareader_tell(dr, read);
-      call stop_timer(timer_readwind_common)
-      call stop_timer(timer_readwind_iter)
-    end do
-  
-    deallocate(buf)
+      call stop_timer(timer_fdb_datareader_tell)
 
-    res = fdb_delete_datareader(dr);
+      call stop_timer(timer_readwind_request)
+
+      ! LOOP THROUGH MESSAGES
+
+      do while(read .LT. total_size)
+
+        call start_timer(timer_readwind_iter)
+        message_count=message_count+1
+
+        call start_timer(timer_readwind_fdb_inloop)
+
+        ! FIND LENGTH OF MESSAGE
+        marker = 2000
+        res = fdb_datareader_read(dr, buf, marker, read)
+        call codes_new_from_message(igrib, buf, status)
+        call grib_get(igrib,'totalLength', messageLength, iret)
+        call grib_check(iret,gribFunction,gribErrorMsg)
+        call grib_release(igrib)
+        ! GO BACK TO START OF MESSAGE
+        res = fdb_datareader_skip(dr, -marker)
+
+        call stop_timer(timer_readwind_fdb_inloop)
+
+        call start_timer(timer_fdb_datareader_read)
+        ! READ WHOLE MESSAGE
+        res = fdb_datareader_read(dr, buf, messageLength, read)
+        call stop_timer(timer_fdb_datareader_read)
+
+        call codes_new_from_message(igrib, buf, status)
+
+        call start_timer(timer_readwind_common)
+
+        ! First see if we read GRIB1 or GRIB2
+        call grib_get(igrib,'editionNumber',gribVer,iret)
+        call grib_check(iret,gribFunction,gribErrorMsg)
+
+        if (gribVer.eq.1) then ! GRIB Edition 1
+      
+          !print*,'GRiB Edition 1'
+          !read the grib2 identifiers
+          call grib_get_int(igrib,'indicatorOfParameter',isec1(6),iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+          call grib_get_int(igrib,'level',isec1(8),iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+      
+          !change code for etadot to code for omega
+          if (isec1(6).eq.77) then
+            isec1(6)=135
+          endif
+      
+          conversion_factor=1.
+      
+        else
+      
+          !print*,'GRiB Edition 2'
+          !read the grib2 identifiers
+          call grib_get_int(igrib,'discipline',discipl,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          call grib_get_int(igrib,'parameterCategory',parCat,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          call grib_get_int(igrib,'parameterNumber',parNum,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          call grib_get_int(igrib,'typeOfFirstFixedSurface',typSurf,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          call grib_get_int(igrib,'level',valSurf,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          call grib_get_int(igrib,'paramId',parId,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+
+          ! print*,discipl,parCat,parNum,typSurf,valSurf
+          
+          !convert to grib1 identifiers
+          isec1(6)=-1
+          isec1(7)=-1
+          isec1(8)=-1
+          isec1(8)=valSurf     ! level
+          conversion_factor=1.
+          if ((parCat.eq.0).and.(parNum.eq.0).and.(typSurf.eq.105)) then ! T
+            isec1(6)=130         ! indicatorOfParameter
+          elseif ((parCat.eq.2).and.(parNum.eq.2).and.(typSurf.eq.105)) then ! U
+            isec1(6)=131         ! indicatorOfParameter
+          elseif ((parCat.eq.2).and.(parNum.eq.3).and.(typSurf.eq.105)) then ! V
+            isec1(6)=132         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.0).and.(typSurf.eq.105)) then ! Q
+            isec1(6)=133         ! indicatorOfParameter
+      ! ESO Cloud water is in a) fields CLWC and CIWC, *or* b) field QC 
+          elseif ((parCat.eq.1).and.(parNum.eq.83).and.(typSurf.eq.105)) then ! clwc
+            isec1(6)=246         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.84).and.(typSurf.eq.105)) then ! ciwc
+            isec1(6)=247         ! indicatorOfParameter
+      ! ESO qc(=clwc+ciwc):
+          elseif ((parCat.eq.201).and.(parNum.eq.31).and.(typSurf.eq.105)) then ! qc
+            isec1(6)=201031         ! indicatorOfParameter
+          elseif ((parCat.eq.3).and.(parNum.eq.0).and.(typSurf.eq.1)) then !SP
+            isec1(6)=134         ! indicatorOfParameter
+          elseif ((parCat.eq.2).and.(parNum.eq.32)) then ! W, actually eta dot
+            isec1(6)=135         ! indicatorOfParameter
+          elseif ((parCat.eq.128).and.(parNum.eq.77)) then ! W, actually eta dot
+            isec1(6)=135         ! indicatorOfParameter
+          elseif ((parCat.eq.3).and.(parNum.eq.0).and.(typSurf.eq.101)) then !SLP
+            isec1(6)=151         ! indicatorOfParameter
+          elseif ((parCat.eq.2).and.(parNum.eq.2).and.(typSurf.eq.103)) then ! 10U
+            isec1(6)=165         ! indicatorOfParameter
+          elseif ((parCat.eq.2).and.(parNum.eq.3).and.(typSurf.eq.103)) then ! 10V
+            isec1(6)=166         ! indicatorOfParameter
+          elseif ((parCat.eq.0).and.(parNum.eq.0).and.(typSurf.eq.103)) then ! 2T
+            isec1(6)=167         ! indicatorOfParameter
+          elseif ((parCat.eq.0).and.(parNum.eq.6).and.(typSurf.eq.103)) then ! 2D
+            isec1(6)=168         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.11).and.(typSurf.eq.1)) then ! SD in older disp-files erroneously coded as SDE
+            isec1(6)=141         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.254).and.(typSurf.eq.1)) then ! SD
+            isec1(6)=141         ! indicatorOfParameter
+          elseif ((parCat.eq.6).and.(parNum.eq.1) .or. parId .eq. 164) then ! CC
+            isec1(6)=164         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.9) .or. parId .eq. 142) then ! LSP de-accumulated and converted to in [mm/h]
+            isec1(6)=142         ! indicatorOfParameter
+          elseif ((parCat.eq.1).and.(parNum.eq.10)) then ! CP de-accumulated and converted to in [mm/h]
+            isec1(6)=143         ! indicatorOfParameter
+          elseif ((parCat.eq.0).and.(parNum.eq.11).and.(typSurf.eq.1)) then ! SHF
+            isec1(6)=146         ! indicatorOfParameter
+            write(*,*) 'isec1(6)=146  '
+          elseif ((parCat.eq.4).and.(parNum.eq.9).and.(typSurf.eq.1)) then ! SR
+            isec1(6)=176         ! indicatorOfParameter
+      !    elseif ((parCat.eq.2).and.(parNum.eq.17) .or. parId .eq. 180) then ! EWSS --wrong
+          elseif ((parCat.eq.2).and.(parNum.eq.38) .or. parId .eq. 180) then ! EWSS --correct
+            isec1(6)=180         ! indicatorOfParameter
+      !    elseif ((parCat.eq.2).and.(parNum.eq.18) .or. parId .eq. 181) then ! NSSS --wrong
+          elseif ((parCat.eq.2).and.(parNum.eq.37) .or. parId .eq. 181) then ! NSSS --correct
+            isec1(6)=181         ! indicatorOfParameter
+          elseif ((parCat.eq.3).and.(parNum.eq.4)) then ! ORO
+            isec1(6)=129         ! indicatorOfParameter
+          elseif ((parCat.eq.3).and.(parNum.eq.7) .or. parId .eq. 160) then ! SDO
+            isec1(6)=160         ! indicatorOfParameter
+          elseif ((discipl.eq.2).and.(parCat.eq.0).and.(parNum.eq.0).and. &
+              (typSurf.eq.1)) then ! LSM
+            isec1(6)=172         ! indicatorOfParameter
+          elseif (parNum.eq.152) then 
+            isec1(6)=152         ! avoid warning for lnsp    
+          else
+            print*,'***WARNING: undefined GRiB2 message found!',discipl, &
+                parCat,parNum,typSurf
+          endif
+          ! write(*,*) 'isec1(6)= ',isec1(6)
+          if(parId .ne. isec1(6) .and. parId .ne. 77) then
+            write(*,*) 'readwind_ecmwf: parId',parId, 'isec1(6)',isec1(6)
+      !    stop
+          endif
+      
+        endif
+
+      !HSO  get the size and data of the values array
+        if (isec1(6).ne.-1) then
+          call grib_get_real4_array(igrib,'values',zsec4,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+        endif
+      
+      !HSO  get the required fields from section 2 in a gribex compatible manner
+        if (ifield.eq.1) then
+          call grib_get_int(igrib,'numberOfPointsAlongAParallel',isec2(2),iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+          call grib_get_int(igrib,'numberOfPointsAlongAMeridian',isec2(3),iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+          call grib_get_int(igrib,'numberOfVerticalCoordinateValues',isec2(12))
+          call grib_check(iret,gribFunction,gribErrorMsg)
+      ! CHECK GRID SPECIFICATIONS
+          if(isec2(2).ne.nxfield) stop 'READWIND: NX NOT CONSISTENT'
+          if(isec2(3).ne.ny) stop 'READWIND: NY NOT CONSISTENT'
+          if(isec2(12)/2-1.ne.nlev_ec) &
+              stop 'READWIND: VERTICAL DISCRETIZATION NOT CONSISTENT'
+        endif ! ifield
+      
+      !HSO  get the second part of the grid dimensions only from GRiB1 messages
+        if (isec1(6) .eq. 167 .and. (gotGrid.eq.0)) then
+          call grib_get_real8(igrib,'longitudeOfFirstGridPointInDegrees', &
+              xauxin,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+          call grib_get_real8(igrib,'latitudeOfLastGridPointInDegrees', &
+              yauxin,iret)
+          call grib_check(iret,gribFunction,gribErrorMsg)
+          if (xauxin.gt.180.) xauxin=xauxin-360.0
+          if (xauxin.lt.-180.) xauxin=xauxin+360.0
+      
+          xaux=xauxin+real(nxshift)*dx
+          yaux=yauxin
+          if (xaux.gt.180.) xaux=xaux-360.0
+          if(abs(xaux-xlon0).gt.eps) &
+              stop 'READWIND: LOWER LEFT LONGITUDE NOT CONSISTENT'
+          if(abs(yaux-ylat0).gt.eps) &
+              stop 'READWIND: LOWER LEFT LATITUDE NOT CONSISTENT'
+          gotGrid=1
+        endif ! gotGrid
+      
+        do j=0,nymin1
+          do i=0,nxfield-1
+            k=isec1(8)
+            if(isec1(6).eq.130) tth(i,j,nlev_ec-k+2,n)= &!! TEMPERATURE
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.131) uuh(i,j,nlev_ec-k+2)= &!! U VELOCITY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.132) vvh(i,j,nlev_ec-k+2)= &!! V VELOCITY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.133) then                      !! SPEC. HUMIDITY
+              qvh(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              if (qvh(i,j,nlev_ec-k+2,n) .lt. 0.) &
+                  qvh(i,j,nlev_ec-k+2,n) = 0.
+      !        this is necessary because the gridded data may contain
+      !        spurious negative values
+            endif
+            if(isec1(6).eq.134) ps(i,j,1,n)= &!! SURF. PRESS.
+                zsec4(nxfield*(ny-j-1)+i+1)
+      
+            if(isec1(6).eq.135) wwh(i,j,nlev_ec-k+1)= &!! W VELOCITY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.141) sd(i,j,1,n)= &!! SNOW DEPTH
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.151) msl(i,j,1,n)= &!! SEA LEVEL PRESS.
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.164) tcc(i,j,1,n)= &!! CLOUD COVER
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.165) u10(i,j,1,n)= &!! 10 M U VELOCITY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.166) v10(i,j,1,n)= &!! 10 M V VELOCITY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.167) tt2(i,j,1,n)= &!! 2 M TEMPERATURE
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.168) td2(i,j,1,n)= &!! 2 M DEW POINT
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.142) then                      !! LARGE SCALE PREC.
+              lsprec(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              if (lsprec(i,j,1,n).lt.0.) lsprec(i,j,1,n)=0.
+            endif
+            if(isec1(6).eq.143) then                      !! CONVECTIVE PREC.
+              convprec(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              if (convprec(i,j,1,n).lt.0.) convprec(i,j,1,n)=0.
+            endif
+            if(isec1(6).eq.146) sshf(i,j,1,n)= &!! SENS. HEAT FLUX
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if((isec1(6).eq.146).and.(zsec4(nxfield*(ny-j-1)+i+1).ne.0.)) &
+                hflswitch=.true.    ! Heat flux available
+            if(isec1(6).eq.176) then                      !! SOLAR RADIATION
+              ssr(i,j,1,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              if (ssr(i,j,1,n).lt.0.) ssr(i,j,1,n)=0.
+            endif
+            if(isec1(6).eq.180) ewss(i,j)= &!! EW SURFACE STRESS
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.181) nsss(i,j)= &!! NS SURFACE STRESS
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(((isec1(6).eq.180).or.(isec1(6).eq.181)).and. &
+                (zsec4(nxfield*(ny-j-1)+i+1).ne.0.)) strswitch=.true.    ! stress available
+      !sec        strswitch=.true.
+            if(isec1(6).eq.129) oro(i,j)= &!! ECMWF OROGRAPHY
+                zsec4(nxfield*(ny-j-1)+i+1)/ga
+            if(isec1(6).eq.160) excessoro(i,j)= &!! STANDARD DEVIATION OF OROGRAPHY
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.172) lsm(i,j)= &!! ECMWF LAND SEA MASK
+                zsec4(nxfield*(ny-j-1)+i+1)
+            if(isec1(6).eq.131) iumax=max(iumax,nlev_ec-k+1)
+            if(isec1(6).eq.135) iwmax=max(iwmax,nlev_ec-k+1)
+      !ZHG READING CLOUD FIELDS ASWELL
+      ! ESO TODO: add check for if one of clwc/ciwc missing (error),
+      ! also if all 3 cw fields present, use qc and disregard the others
+            if(isec1(6).eq.246) then  !! CLWC  Cloud liquid water content [kg/kg]
+              clwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              readclouds=.true.
+              sumclouds=.false.
+            endif
+            if(isec1(6).eq.247) then  !! CIWC  Cloud ice water content
+              ciwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
+            endif
+      !ZHG end
+      !ESO read qc (=clwc+ciwc)
+            if(isec1(6).eq.201031) then  !! QC  Cloud liquid water content [kg/kg]
+              clwch(i,j,nlev_ec-k+2,n)=zsec4(nxfield*(ny-j-1)+i+1)
+              readclouds=.true.
+              sumclouds=.true.
+            endif
+      
+          end do
+        end do
+
+        call grib_release(igrib)
+        res = fdb_datareader_tell(dr, read);
+        call stop_timer(timer_readwind_common)
+        call stop_timer(timer_readwind_iter)
+      end do
+      ! END LOOP THROUGH MESSAGES
+
+      res = fdb_delete_datareader(dr);
+
+      deallocate(buf)
+      
+    end do
+
 
   else
   

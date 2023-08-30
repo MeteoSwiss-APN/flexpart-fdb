@@ -183,7 +183,6 @@ program flexpart
     timer_readwind_request  = new_timer("Readwind FDB Request")
     timer_fdb_datareader_read = new_timer("fdb_datareader_read_message")
 
-    timer_fdb_request_datetime = new_timer("fdb_request_datetime")
     timer_fdb_create_request_dr = new_timer("fdb_create_request_dr")
     timer_fdb_datareader_open = new_timer("fdb_datareader_open")
     timer_fdb_get_max_message_len = new_timer("fdb_get_max_message_len")
@@ -194,7 +193,6 @@ program flexpart
     timer_fdb_new_dr = new_timer("fdb_new_datareader")
     timer_fdb_retrieve = new_timer("fdb_retrieve")
 
-    timer_fdb_inspect = new_timer("fdb_inspect")
   endif
 
   ! Initialize arrays in com_mod
